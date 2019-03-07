@@ -3,7 +3,7 @@
 """
 Created on Tue Jan 15 12:44:49 2019
 
-@author: i074765
+@author: Vaibhav Maurya
 """
 
 class DataPreprocessing:
@@ -16,6 +16,8 @@ class DataPreprocessing:
         import pandas as pd
         import sqlite3 as sql
         import traceback
+        import numpy as np
+        from dateutil.parser import parse
         
         self.js = js
         self.t = t
@@ -28,17 +30,22 @@ class DataPreprocessing:
         self.db_dir = d['db']
         self.pd = pd
         self.db = sql
-        self.traceback = traceback         
+        self.traceback = traceback
+        self.np = np 
+        self.parse = parse        
 #        self.src_dir = '../data/raw'
 #        self.clean_data_dir = '../data/clean_data'
 #        self.process_dir = '../data/processed'
 #        self.datastructure_json = '../src/models/datastructure.json'  
-        self.readDataParser()
+        self.data_parser = self.readDataParser()
+        self.data_parser["aColIndices"] = []
+        for k,v in self.data_parser["data_cols"].items():
+            self.data_parser["aColIndices"].append(v["pos"])
         
     def readDataParser(self):
         with open(self.datastructure_json) as f:
-            self.data_parser = self.js.load(f)
-            return self.data_parser
+            data_parser = self.js.load(f)
+            return data_parser
         
     def getTemplate(self, seperator=","):
         p = seperator+"$"
@@ -51,15 +58,21 @@ class DataPreprocessing:
     def parseTemplateForString(self, a, seperator=","):
         g = self.getTemplate(seperator)
         return g.substitute(self.parseString(a))
+
+    def dateparser(self,x):
+        try:
+            return self.parse(x).strftime("%Y-%m-%d %H:%M:%S")
+        except:
+            return '2000-01-01 00:00:00'
         
-    def read_process_cleandata(self, buffersize=50, filename='full_data.csv'):
+    def read_process_cleandata(self, filename, buffersize):
         csv_reader = None
         path = self.os_mod.path.join(self.clean_data_dir,filename)
         if not self.os_mod.path.exists(path):
             print("NOT FOUND clean data file: {}".format(path))
             return None
         print("Found clean data file: {}".format(path))
-        csv_reader = self.pd.read_csv(path, parse_dates={'ETD_DATETIME':['ETD_DATE','ETD_TD_TIME']}, chunksize=buffersize)
+        csv_reader = self.pd.read_csv(path, parse_dates={'ETD_DATETIME':['ETD_DATE','ETD_TD_TIME']}, chunksize=buffersize, date_parser=self.dateparser)
         print("csv chunk reader created {}".format(csv_reader))
         return csv_reader
 
@@ -107,7 +120,7 @@ class DataPreprocessing:
             print(" First cleaning table: {}".format(tablename))
             if self.is_table_exists(conn, tablename):
                 print(" TABLE EXISTS !!! ")
-                self.clean_db_table(conn, tablename)
+                # self.clean_db_table(conn, tablename)
                 print("{} table has rows : {}".format(tablename, self.get_table_rowcount(conn, tablename)))
                 
             for chunk in csv_reader:
@@ -126,13 +139,43 @@ class DataPreprocessing:
             conn.close()
         
         
-        
+    def parseTxtAndPrn(self, p):
+           return self.parseTemplateForString(p)
+
+    def parseCSV(self, p):
+        return ",".join(self.np.array(p.split(','))[self.data_parser["aColIndices"]])
+
+    def isCSV(self, data_file):
+        return data_file.lower().endswith(".csv")
+
+    def isTxtOrLstFile(self, data_file):
+        return data_file.lower().endswith(".txt") or data_file.lower().endswith(".lst")
+
+    def isExcelFile(self, data_file):
+        return data_file.lower().endswith(".xlsx") or data_file.lower().endswith(".xls")
         
     def write_processed_data(self, data_file, clean_data_file):       
-        read_flag = False        
+        read_flag = False
+        fMethod = None
+        b_CsvFlag = False
+        if not self.os_mod.path.exists(data_file):
+            print(">>> Data File does not exist")
+            return
+
+        if self.isCSV(data_file):
+            fMethod = self.parseCSV
+            b_CsvFlag = True
+            print("CSV file it is ")
+        elif self.isTxtOrLstFile(data_file):
+            fMethod = self.parseTxtAndPrn
+            print("Text or lst file it is ")
+        else:
+            print(">>>>>This file is not recognized<<<<<< \n\n")
+            return
+
         if self.os_mod.path.exists(clean_data_file):
             fw = open(clean_data_file,'a+')
-            print(">>> File already exists")
+            print(">>> File already exists here")
         else:
             fw = open(clean_data_file,'w+')
             print(">>> Created New output File")
@@ -148,14 +191,15 @@ class DataPreprocessing:
                     read_flag = True
                     continue
                 if read_flag:
-                    if len(p) < 10:
+                    if b_CsvFlag and len(p.split(',')) < 45:
+                        read_flag = False
+                    elif len(p) < 40:
                         read_flag = False
                     else:
-                        g = self.parseTemplateForString(p)
+                        g = fMethod(p)
                         fw.write(g)
                         fw.write("\n")
-                p = f.readline()
-                
+                p = f.readline()               
         fw.close()
         
     def processData(self, format='csv', isOneFile=True):
@@ -174,8 +218,8 @@ class DataPreprocessing:
                 self.shell_utill.move(p,self.process_dir)
                 
     
-    def write_processeddata_db(self, db_name, tablename):
-        reader = self.read_process_cleandata()
+    def write_processeddata_db(self, db_name, tablename, filename='full_data.csv', buffersize=100000):
+        reader = self.read_process_cleandata(filename, buffersize)
         self.write_to_db(db_name, tablename, reader)
         
         

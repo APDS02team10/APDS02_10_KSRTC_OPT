@@ -31,4 +31,4 @@ else:
         start_time = time.time() 
 
         print("\n ------------ Start db writing db --------\n ")
-        dp_class.write_processeddata_db('ksrctc.db', 'KSRCTC_BUS')
+        dp_class.write_processeddata_db('ksrtc.db', 'KSRTC_BUS_DATA_V1')
